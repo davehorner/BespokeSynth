@@ -137,6 +137,8 @@ target_sources(BespokeSynth PRIVATE
     Compressor.h
     ControlInterface.cpp
     ControlInterface.h
+    Cuneus.cpp
+    Cuneus.h
     ControlRecorder.cpp
     ControlRecorder.h
     ControlSequencer.cpp
@@ -817,6 +819,61 @@ target_include_directories(BespokeSynth PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${Python_INCLUDE_DIRS}
     )
+
+set(BESPOKE_CUNEUS_DEFAULT_ROOT "")
+if(EXISTS "R:/w/cuneus/Cargo.toml")
+    set(BESPOKE_CUNEUS_DEFAULT_ROOT "R:/w/cuneus")
+endif()
+set(BESPOKE_CUNEUS_ROOT "${BESPOKE_CUNEUS_DEFAULT_ROOT}" CACHE PATH "Path to a local cuneus workspace; leave empty to disable cuneus integration")
+set(BESPOKE_CUNEUS_CARGO_TARGET_DIR "${CMAKE_SOURCE_DIR}/ignore/cuneus-target" CACHE PATH "Cargo target directory for cuneus")
+
+if(BESPOKE_CUNEUS_ROOT)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR "cuneus support requires cargo. Set BESPOKE_CUNEUS_ROOT empty to disable it.")
+    endif()
+
+    set(BESPOKE_CUNEUS_CARGO_ARGS build --release --no-default-features --lib --bin roto)
+
+    if(WIN32)
+        set(BESPOKE_CUNEUS_IMPORT_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/cuneus.dll.lib")
+        set(BESPOKE_CUNEUS_RUNTIME_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/cuneus.dll")
+        set(BESPOKE_CUNEUS_ROTO_EXECUTABLE "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/roto.exe")
+        set(BESPOKE_CUNEUS_LINK_LIBRARY "${BESPOKE_CUNEUS_IMPORT_LIBRARY}")
+    elseif(APPLE)
+        set(BESPOKE_CUNEUS_RUNTIME_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/libcuneus.dylib")
+        set(BESPOKE_CUNEUS_ROTO_EXECUTABLE "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/roto")
+        set(BESPOKE_CUNEUS_LINK_LIBRARY "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}")
+    else()
+        set(BESPOKE_CUNEUS_RUNTIME_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/libcuneus.so")
+        set(BESPOKE_CUNEUS_ROTO_EXECUTABLE "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/roto")
+        set(BESPOKE_CUNEUS_LINK_LIBRARY "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}")
+    endif()
+
+    set(BESPOKE_CUNEUS_OUTPUTS "${BESPOKE_CUNEUS_LINK_LIBRARY}" "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}" "${BESPOKE_CUNEUS_ROTO_EXECUTABLE}")
+    list(REMOVE_DUPLICATES BESPOKE_CUNEUS_OUTPUTS)
+
+    add_custom_command(
+        OUTPUT ${BESPOKE_CUNEUS_OUTPUTS}
+        COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${BESPOKE_CUNEUS_CARGO_TARGET_DIR}" ${CARGO_EXECUTABLE} ${BESPOKE_CUNEUS_CARGO_ARGS}
+        WORKING_DIRECTORY "${BESPOKE_CUNEUS_ROOT}"
+        VERBATIM
+    )
+    add_custom_target(cuneus_capi_build DEPENDS ${BESPOKE_CUNEUS_OUTPUTS})
+    add_dependencies(BespokeSynth cuneus_capi_build)
+
+    target_compile_definitions(BespokeSynth PRIVATE BESPOKE_CUNEUS_ENABLED=1)
+    target_include_directories(BespokeSynth PRIVATE "${BESPOKE_CUNEUS_ROOT}/include")
+    target_link_libraries(BespokeSynth PRIVATE "${BESPOKE_CUNEUS_LINK_LIBRARY}")
+
+    add_custom_command(TARGET BespokeSynth POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}" "$<TARGET_FILE_DIR:BespokeSynth>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BESPOKE_CUNEUS_ROTO_EXECUTABLE}" "$<TARGET_FILE_DIR:BespokeSynth>"
+        VERBATIM
+    )
+else()
+    target_compile_definitions(BespokeSynth PRIVATE BESPOKE_CUNEUS_ENABLED=0)
+endif()
 
 set(BESPOKE_STABLE_AUDIO_DEFAULT_ROOT "")
 if(EXISTS "R:/w/stableaudio-rs/Cargo.toml")
