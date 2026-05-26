@@ -36,6 +36,7 @@ extern "C" {
 #include "juce_core/juce_core.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace
 {
@@ -49,6 +50,15 @@ namespace
       CUNEUS_PARAM_COLOR3 = 1
    };
 #endif
+
+   float OscArgToFloat(const juce::OSCArgument& arg, float fallback)
+   {
+      if (arg.isFloat32())
+         return arg.getFloat32();
+      if (arg.isInt32())
+         return (float)arg.getInt32();
+      return fallback;
+   }
 }
 
 Cuneus::Cuneus()
@@ -60,6 +70,7 @@ Cuneus::Cuneus()
 Cuneus::~Cuneus()
 {
    CloseInstance();
+   StopFeedbackReceiver();
    ClearParamControls();
 }
 
@@ -91,6 +102,14 @@ void Cuneus::CreateUIControls()
 
 void Cuneus::Poll()
 {
+#if BESPOKE_CUNEUS_ENABLED
+   if (mInstance != nullptr && mPendingDiscoveryRequests > 0 && gTime > mLastDiscoveryRequestTime + 0.25)
+   {
+      RequestDiscovery();
+      --mPendingDiscoveryRequests;
+      mLastDiscoveryRequestTime = gTime;
+   }
+#endif
 }
 
 void Cuneus::RefreshBinList()
@@ -140,7 +159,9 @@ void Cuneus::OpenInstance()
 #if BESPOKE_CUNEUS_ENABLED
    CloseInstance();
    const std::string binName = GetSelectedBinName();
-   mInstance = cuneus_instance_open(binName.c_str(), mExecutableDir.c_str(), (uint16_t)mRemotePort);
+   mFeedbackPort = mRemotePort >= 65535 ? mRemotePort - 1 : mRemotePort + 1;
+   StartFeedbackReceiver();
+   mInstance = cuneus_instance_open_with_feedback(binName.c_str(), mExecutableDir.c_str(), (uint16_t)mRemotePort, (uint16_t)mFeedbackPort);
    if (mInstance == nullptr)
    {
       const char* error = cuneus_last_error();
@@ -149,7 +170,8 @@ void Cuneus::OpenInstance()
    }
 
    RefreshParamControls();
-   SetStatus("opened " + binName);
+   mPendingDiscoveryRequests = 8;
+   SetStatus("opened " + binName + " osc " + std::to_string(mFeedbackPort));
 #else
    SetStatus("BespokeSynth was built without cuneus support");
 #endif
@@ -167,6 +189,7 @@ void Cuneus::CloseInstance()
    mInstance = nullptr;
 #endif
    ClearParamControls();
+   mPendingDiscoveryRequests = 0;
 }
 
 void Cuneus::ClearParamControls()
@@ -243,6 +266,9 @@ void Cuneus::SendParam(ParamControl& param)
 
 void Cuneus::FloatSliderUpdated(FloatSlider* slider, float oldVal, double time)
 {
+   if (mApplyingFeedback)
+      return;
+
    for (auto& param : mParams)
    {
       for (auto* paramSlider : param.sliders)
@@ -277,6 +303,102 @@ void Cuneus::ButtonClicked(ClickButton* button, double time)
 
 void Cuneus::TextEntryComplete(TextEntry* entry)
 {
+}
+
+bool Cuneus::StartFeedbackReceiver()
+{
+#if BESPOKE_CUNEUS_ENABLED
+   if (mFeedbackReceiverConnected)
+      StopFeedbackReceiver();
+
+   const bool connected = juce::OSCReceiver::connect(mFeedbackPort);
+   if (!connected)
+   {
+      SetStatus("osc feedback port unavailable: " + std::to_string(mFeedbackPort));
+      return false;
+   }
+
+   juce::OSCReceiver::addListener(this);
+   mFeedbackReceiverConnected = true;
+   return true;
+#else
+   return false;
+#endif
+}
+
+void Cuneus::StopFeedbackReceiver()
+{
+   if (mFeedbackReceiverConnected)
+   {
+      juce::OSCReceiver::removeListener(this);
+      juce::OSCReceiver::disconnect();
+      mFeedbackReceiverConnected = false;
+   }
+}
+
+void Cuneus::RequestDiscovery()
+{
+#if BESPOKE_CUNEUS_ENABLED
+   if (mInstance == nullptr)
+      return;
+   cuneus_subscribe(mInstance, true);
+   cuneus_discover(mInstance);
+#endif
+}
+
+void Cuneus::ApplyFeedbackValue(const std::string& id, const juce::OSCMessage& msg)
+{
+   if (msg.size() == 0)
+      return;
+
+   for (auto& param : mParams)
+   {
+      if (param.id != id)
+         continue;
+
+      mApplyingFeedback = true;
+      if (param.type == CUNEUS_PARAM_COLOR3 && msg.size() >= 3)
+      {
+         for (int i = 0; i < 3; ++i)
+         {
+            param.values[i] = OscArgToFloat(msg[i], param.values[i]);
+            if (param.sliders[i] != nullptr)
+               param.sliders[i]->SetValue(param.values[i], gTime, true);
+         }
+      }
+      else
+      {
+         param.values[0] = OscArgToFloat(msg[0], param.values[0]);
+         if (param.sliders[0] != nullptr)
+            param.sliders[0]->SetValue(param.values[0], gTime, true);
+      }
+      mApplyingFeedback = false;
+      return;
+   }
+}
+
+void Cuneus::oscMessageReceived(const juce::OSCMessage& msg)
+{
+   const std::string address = msg.getAddressPattern().toString().toStdString();
+
+   if (address == "/cuneus/status" && msg.size() >= 1 && msg[0].isString())
+   {
+      SetStatus("cuneus " + msg[0].getString().toStdString());
+      return;
+   }
+
+   const std::string paramPrefix = "/cuneus/param/";
+   if (address.rfind(paramPrefix, 0) == 0)
+   {
+      ApplyFeedbackValue(address.substr(paramPrefix.length()), msg);
+      return;
+   }
+
+   if (address == "/cuneus/bin" && msg.size() >= 1 && msg[0].isString())
+   {
+      SetStatus("connected " + msg[0].getString().toStdString());
+      return;
+   }
 }
 
 void Cuneus::PlayNote(NoteMessage note)

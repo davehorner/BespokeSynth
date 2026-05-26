@@ -835,24 +835,45 @@ if(BESPOKE_CUNEUS_ROOT)
         message(FATAL_ERROR "cuneus support requires cargo. Set BESPOKE_CUNEUS_ROOT empty to disable it.")
     endif()
 
-    set(BESPOKE_CUNEUS_CARGO_ARGS build --release --no-default-features --lib --bin roto)
+    set(BESPOKE_CUNEUS_BINS
+        roto
+        cuneus
+        tree
+        2dneuron
+        gabor
+        plasma
+        lorenz
+        nebula
+        satan
+        sdvert
+        asahi
+    )
+    set(BESPOKE_CUNEUS_CARGO_ARGS build --release --no-default-features --lib)
+    foreach(BESPOKE_CUNEUS_BIN IN LISTS BESPOKE_CUNEUS_BINS)
+        list(APPEND BESPOKE_CUNEUS_CARGO_ARGS --bin "${BESPOKE_CUNEUS_BIN}")
+    endforeach()
 
     if(WIN32)
         set(BESPOKE_CUNEUS_IMPORT_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/cuneus.dll.lib")
         set(BESPOKE_CUNEUS_RUNTIME_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/cuneus.dll")
-        set(BESPOKE_CUNEUS_ROTO_EXECUTABLE "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/roto.exe")
         set(BESPOKE_CUNEUS_LINK_LIBRARY "${BESPOKE_CUNEUS_IMPORT_LIBRARY}")
+        set(BESPOKE_CUNEUS_EXECUTABLE_SUFFIX ".exe")
     elseif(APPLE)
         set(BESPOKE_CUNEUS_RUNTIME_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/libcuneus.dylib")
-        set(BESPOKE_CUNEUS_ROTO_EXECUTABLE "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/roto")
         set(BESPOKE_CUNEUS_LINK_LIBRARY "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}")
+        set(BESPOKE_CUNEUS_EXECUTABLE_SUFFIX "")
     else()
         set(BESPOKE_CUNEUS_RUNTIME_LIBRARY "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/libcuneus.so")
-        set(BESPOKE_CUNEUS_ROTO_EXECUTABLE "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/roto")
         set(BESPOKE_CUNEUS_LINK_LIBRARY "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}")
+        set(BESPOKE_CUNEUS_EXECUTABLE_SUFFIX "")
     endif()
 
-    set(BESPOKE_CUNEUS_OUTPUTS "${BESPOKE_CUNEUS_LINK_LIBRARY}" "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}" "${BESPOKE_CUNEUS_ROTO_EXECUTABLE}")
+    set(BESPOKE_CUNEUS_EXECUTABLES "")
+    foreach(BESPOKE_CUNEUS_BIN IN LISTS BESPOKE_CUNEUS_BINS)
+        list(APPEND BESPOKE_CUNEUS_EXECUTABLES "${BESPOKE_CUNEUS_CARGO_TARGET_DIR}/release/${BESPOKE_CUNEUS_BIN}${BESPOKE_CUNEUS_EXECUTABLE_SUFFIX}")
+    endforeach()
+
+    set(BESPOKE_CUNEUS_OUTPUTS "${BESPOKE_CUNEUS_LINK_LIBRARY}" "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}" ${BESPOKE_CUNEUS_EXECUTABLES})
     list(REMOVE_DUPLICATES BESPOKE_CUNEUS_OUTPUTS)
 
     add_custom_command(
@@ -870,9 +891,14 @@ if(BESPOKE_CUNEUS_ROOT)
 
     add_custom_command(TARGET BespokeSynth POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BESPOKE_CUNEUS_RUNTIME_LIBRARY}" "$<TARGET_FILE_DIR:BespokeSynth>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BESPOKE_CUNEUS_ROTO_EXECUTABLE}" "$<TARGET_FILE_DIR:BespokeSynth>"
         VERBATIM
     )
+    foreach(BESPOKE_CUNEUS_EXECUTABLE IN LISTS BESPOKE_CUNEUS_EXECUTABLES)
+        add_custom_command(TARGET BespokeSynth POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${BESPOKE_CUNEUS_EXECUTABLE}" "$<TARGET_FILE_DIR:BespokeSynth>"
+            VERBATIM
+        )
+    endforeach()
 else()
     target_compile_definitions(BespokeSynth PRIVATE BESPOKE_CUNEUS_ENABLED=0)
 endif()
