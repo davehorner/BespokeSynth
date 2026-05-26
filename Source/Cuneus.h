@@ -26,13 +26,15 @@
 #include "Slider.h"
 #include "TextEntry.h"
 
+#include "juce_osc/juce_osc.h"
+
 #include <array>
 #include <string>
 #include <vector>
 
 struct CuneusInstance;
 
-class Cuneus : public IDrawableModule, public IFloatSliderListener, public IIntSliderListener, public IDropdownListener, public IButtonListener, public ITextEntryListener, public IPulseReceiver, public INoteReceiver
+class Cuneus : public IDrawableModule, public IFloatSliderListener, public IIntSliderListener, public IDropdownListener, public IButtonListener, public ITextEntryListener, public IPulseReceiver, public INoteReceiver, private juce::OSCReceiver, private juce::OSCReceiver::Listener<juce::OSCReceiver::MessageLoopCallback>
 {
 public:
    Cuneus();
@@ -58,6 +60,7 @@ public:
    void DropdownUpdated(DropdownList* list, int oldVal, double time) override;
    void ButtonClicked(ClickButton* button, double time) override;
    void TextEntryComplete(TextEntry* entry) override;
+   void oscMessageReceived(const juce::OSCMessage& msg) override;
 
    void LoadLayout(const ofxJSONElement& moduleInfo) override;
    void SaveLayout(ofxJSONElement& moduleInfo) override;
@@ -83,6 +86,10 @@ private:
    void RefreshParamControls();
    void ClearParamControls();
    void SendParam(ParamControl& param);
+   bool StartFeedbackReceiver();
+   void StopFeedbackReceiver();
+   void RequestDiscovery();
+   void ApplyFeedbackValue(const std::string& id, const juce::OSCMessage& msg);
    std::string GetSelectedBinName() const;
    std::string GetDefaultExecutableDir() const;
    void SetStatus(std::string status);
@@ -94,6 +101,11 @@ private:
    std::string mStatus;
    int mSelectedBin{ 0 };
    int mRemotePort{ 7841 };
+   int mFeedbackPort{ 7842 };
+   bool mFeedbackReceiverConnected{ false };
+   bool mApplyingFeedback{ false };
+   int mPendingDiscoveryRequests{ 0 };
+   double mLastDiscoveryRequestTime{ -9999 };
 
    DropdownList* mBinDropdown{ nullptr };
    TextEntry* mExecutableDirEntry{ nullptr };
